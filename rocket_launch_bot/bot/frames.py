@@ -21,11 +21,19 @@ class VideoInfo(NamedTuple):
 
 
 class FrameXClient:
-    """Client for FrameX API with proper error handling"""
+    """Client for FrameX API with PythonAnywhere workaround"""
     
     def __init__(self):
-        self.client = httpx.AsyncClient(timeout=Config.REQUEST_TIMEOUT)
         self.base_url = Config.API_BASE
+        # Use a client without proxy settings for PythonAnywhere
+        self.client = httpx.AsyncClient(
+            timeout=Config.REQUEST_TIMEOUT,
+            proxies=None,  # Disable proxies
+            headers={
+                'User-Agent': 'RocketLaunchBot/1.0',
+                'Accept': 'application/json'
+            }
+        )
     
     async def get_video_info(self, video_name: str) -> VideoInfo:
         """Fetch video metadata"""

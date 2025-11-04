@@ -8,7 +8,7 @@ class Config:
     BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
     # FrameX API
-    API_BASE: str = os.getenv("API_BASE", "https://framex.wadledot.com/api/")
+    API_BASE: str = os.getenv("API_BASE", "https://framex-develop-amzw3.ondigitalocean.app/api/")
     VIDEO_NAME: str = os.getenv("VIDEO_NAME", "Falcon Heavy Test Flight (Hosted Webcast)-wbSwFU6tY1c")
 
     # Bot settings
