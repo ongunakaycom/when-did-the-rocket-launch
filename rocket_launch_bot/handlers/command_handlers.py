@@ -2,6 +2,7 @@ import logging
 import sys
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.error import BadRequest
 from telegram.ext import CallbackContext
 from bot.framex_client import FrameXClient, FrameProcessor
 from bot.session_manager import SessionManager
@@ -35,9 +36,9 @@ async def start_command(update: Update, context: CallbackContext):
             "🚀 *Rocket Launch Frame Detector*\n\n"
             "I'll help you find the exact frame where the rocket launches!\n"
             f"• Total frames: {video_info.frames:,}\n"
-            f"• Estimated steps: {progress['remaining_steps'] + progress['steps_taken']}\n"
-            f"• Current progress: {progress['progress_percentage']}%\n\n"
-            "I'll show you frames and you tell me if the rocket has launched yet."
+            f"• Estimated steps: {progress['remaining_steps'] + progress['steps_taken']}\n\n"
+            "*Important:* The video shows the launch preparation first, then the actual launch.\n"
+            "Answer 'Yes' when you see the rocket has *already launched* (fire/smoke, moving upward)."
         )
 
         # Handle both message and callback_query scenarios
@@ -49,11 +50,19 @@ async def start_command(update: Update, context: CallbackContext):
             # Show first frame
             await show_current_frame(update, context, session)
         elif update.callback_query:
-            # For callback queries, we need to edit the existing message
-            await update.callback_query.edit_message_text(
-                welcome_text,
-                parse_mode='Markdown'
-            )
+            # For callback queries, we need to handle both text and photo messages
+            try:
+                # Try to edit as caption first (if it's a photo message)
+                await update.callback_query.edit_message_caption(
+                    caption=welcome_text,
+                    parse_mode='Markdown'
+                )
+            except BadRequest:
+                # If that fails, edit as text
+                await update.callback_query.edit_message_text(
+                    welcome_text,
+                    parse_mode='Markdown'
+                )
             # Show first frame after a brief delay
             await show_current_frame(update, context, session)
 
@@ -63,10 +72,20 @@ async def start_command(update: Update, context: CallbackContext):
         if update.message:
             await update.message.reply_text(error_msg)
         elif update.callback_query:
-            await update.callback_query.edit_message_text(error_msg)
+            try:
+                await update.callback_query.edit_message_text(error_msg)
+            except BadRequest:
+                await update.callback_query.edit_message_caption(caption=error_msg)
 
-async def show_current_frame(update: Update, context: CallbackContext, session):
+async def show_current_frame(update: Update, context: CallbackContext, session=None):
     """Show current frame to user"""
+    if session is None:
+        user_id = update.effective_user.id
+        session = session_manager.get_session(user_id)
+        if not session:
+            await handle_session_expired(update, context)
+            return
+
     try:
         progress = session.get_progress_info()
 
@@ -79,7 +98,8 @@ async def show_current_frame(update: Update, context: CallbackContext, session):
             f"📊 *Frame {session.current_frame:,} of {session.total_frames:,}*\n"
             f"🔄 Step {progress['steps_taken']} of ~{progress['remaining_steps'] + progress['steps_taken']}\n"
             f"📈 Progress: {progress['progress_percentage']}%\n\n"
-            "*Has the rocket launched yet?* 🚀"
+            "*Has the rocket launched yet?* 🚀\n"
+            "(Answer 'Yes' when you see fire/smoke and upward movement)"
         )
 
         # Create keyboard
@@ -87,16 +107,24 @@ async def show_current_frame(update: Update, context: CallbackContext, session):
             [
                 InlineKeyboardButton("🚀 Yes, Rocket Launched", callback_data="yes"),
                 InlineKeyboardButton("❌ No, Not Yet", callback_data="no")
-            ]
+            ],
+            [InlineKeyboardButton("🔄 Restart", callback_data="restart")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         # Send photo with caption and buttons
         if update.callback_query:
-            await update.callback_query.edit_message_media(
-                media=InputMediaPhoto(processed_image, caption=caption, parse_mode='Markdown'),
-                reply_markup=reply_markup
-            )
+            try:
+                await update.callback_query.edit_message_media(
+                    media=InputMediaPhoto(processed_image, caption=caption, parse_mode='Markdown'),
+                    reply_markup=reply_markup
+                )
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    # Message is the same, ignore the error
+                    logger.info("Message not modified (same content), continuing...")
+                else:
+                    raise e
         else:
             await update.message.reply_photo(
                 photo=processed_image,
@@ -106,14 +134,22 @@ async def show_current_frame(update: Update, context: CallbackContext, session):
             )
 
     except Exception as e:
-        logger.error(f"Error showing frame {session.current_frame if session else 'unknown'}: {e}")
+        logger.error(f"Error showing frame {session.current_frame if session else 'unknown'}: {e}", exc_info=True)
         error_msg = (
             "❌ Sorry, I couldn't load the frame. "
             "This might be due to network issues or the frame being unavailable.\n\n"
             "Please try again with /start"
         )
         if update.callback_query:
-            await update.callback_query.edit_message_text(error_msg)
+            try:
+                await update.callback_query.edit_message_text(error_msg)
+            except Exception as edit_error:
+                logger.error(f"Error editing message: {edit_error}")
+                # If editing fails, send a new message
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=error_msg
+                )
         else:
             await update.message.reply_text(error_msg)
 
@@ -125,6 +161,8 @@ async def handle_frame_response(update: Update, context: CallbackContext):
     user_id = query.from_user.id
     response = query.data
 
+    logger.info(f"User {user_id} responded: {response}")
+
     # Validate response
     if response not in ['yes', 'no']:
         logger.warning(f"Invalid response received: {response}")
@@ -133,25 +171,39 @@ async def handle_frame_response(update: Update, context: CallbackContext):
 
     session = session_manager.get_session(user_id)
     if not session:
-        await query.edit_message_text("❌ Session expired. Please start again with /start")
+        await handle_session_expired(update, context)
         return
 
     try:
         # Update bounds based on user response
         has_launched = (response == "yes")
+        logger.info(f"User {user_id} at frame {session.current_frame}: launched={has_launched}")
+        
         session.update_bounds(has_launched)
 
         # Check if bisection is complete
-        if session.next_step():
+        if session.is_complete():
             # Bisection complete - show results
+            logger.info(f"Session complete for user {user_id}. Found frame: {session.found_frame}")
             await show_results(update, context, session)
+            session_manager.end_session(user_id)
         else:
-            # Show next frame
+            # Continue to next frame
+            session.next_step()
             await show_current_frame(update, context, session)
 
     except Exception as e:
-        logger.error(f"Error handling frame response: {e}")
-        await query.edit_message_text("❌ Sorry, I encountered an error. Please try again with /start")
+        logger.error(f"Error handling frame response: {e}", exc_info=True)
+        try:
+            # Try to edit the message
+            await query.edit_message_text("❌ Sorry, I encountered an error. Please try again with /start")
+        except Exception as edit_error:
+            logger.error(f"Error editing message: {edit_error}")
+            # If editing fails, send a new message
+            await context.bot.send_message(
+                chat_id=user_id, 
+                text="❌ Sorry, I encountered an error. Please try again with /start"
+            )
 
 async def show_results(update: Update, context: CallbackContext, session):
     """Show final results"""
@@ -179,7 +231,7 @@ async def show_results(update: Update, context: CallbackContext, session):
         )
 
     except Exception as e:
-        logger.error(f"Error showing results: {e}")
+        logger.error(f"Error showing results: {e}", exc_info=True)
         await update.callback_query.edit_message_text(
             f"🎉 Analysis Complete!\n\nLaunch frame: {session.found_frame:,}\n\n"
             "Sorry, I couldn't load the final frame image."
@@ -202,20 +254,55 @@ async def handle_restart(update: Update, context: CallbackContext):
         
         # Create new user session
         session = session_manager.create_session(user_id, video_info.frames)
+        progress = session.get_progress_info()
+
+        # Send new welcome message - use edit_message_caption if it's a photo message
+        welcome_text = (
+            "🔄 *Session Restarted!*\n\n"
+            "🚀 *Rocket Launch Frame Detector*\n\n"
+            "I'll help you find the exact frame where the rocket launches!\n"
+            f"• Total frames: {video_info.frames:,}\n"
+            f"• Estimated steps: {progress['remaining_steps'] + progress['steps_taken']}\n\n"
+            "*Important:* The video shows the launch preparation first, then the actual launch.\n"
+            "Answer 'Yes' when you see the rocket has *already launched* (fire/smoke, moving upward)."
+        )
+
+        try:
+            # First try to edit the caption if it's a photo message
+            await query.edit_message_caption(
+                caption=welcome_text,
+                parse_mode='Markdown'
+            )
+        except BadRequest:
+            # If that fails (message is text, not photo), edit as text
+            await query.edit_message_text(
+                welcome_text,
+                parse_mode='Markdown'
+            )
         
-        # Instead of trying to edit the message text (which doesn't exist for photo messages),
-        # directly show the first frame which will handle both text and photo messages properly
+        # Show first frame
         await show_current_frame(update, context, session)
         
     except Exception as e:
-        logger.error(f"Error during restart for user {user_id}: {e}")
-        # For error message, we need to handle both text and media messages
+        logger.error(f"Error during restart for user {user_id}: {e}", exc_info=True)
+        error_msg = "❌ Error restarting session. Please try /start"
         try:
-            await query.edit_message_text("❌ Error restarting session. Please try /start")
+            # Try multiple approaches to ensure we can send the error message
+            try:
+                await query.edit_message_text(error_msg)
+            except BadRequest:
+                await query.edit_message_caption(caption=error_msg)
         except Exception as edit_error:
-            # If editing the message fails (because it's a media message), send a new message
-            logger.error(f"Could not edit message, sending new one: {edit_error}")
+            logger.error(f"Error editing message during restart: {edit_error}")
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
-                text="❌ Error restarting session. Please try /start"
+                text=error_msg
             )
+            
+async def handle_session_expired(update: Update, context: CallbackContext):
+    """Handle expired session"""
+    error_msg = "❌ Session expired or not found. Please start again with /start"
+    if update.callback_query:
+        await update.callback_query.edit_message_text(error_msg)
+    else:
+        await update.message.reply_text(error_msg)

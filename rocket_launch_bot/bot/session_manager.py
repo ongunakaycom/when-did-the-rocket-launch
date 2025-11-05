@@ -12,14 +12,15 @@ class UserSession:
         self.total_frames = total_frames
         self.left_bound = 0
         self.right_bound = total_frames - 1
-        self.current_frame = 0
-        self.steps_taken = 0
+        self.steps_taken = 1  # ← Count this as first step
         self.found_frame: Optional[int] = None
+        self.is_finished = False
     
     def next_step(self) -> bool:
         """Calculate next frame to show, returns True if bisection is complete"""
-        if self.left_bound + 1 >= self.right_bound:
+        if self.left_bound >= self.right_bound:  # Simplified condition
             self.found_frame = self.right_bound
+            self.is_finished = True
             return True
         
         self.current_frame = (self.left_bound + self.right_bound) // 2
@@ -29,19 +30,28 @@ class UserSession:
     def update_bounds(self, has_launched: bool):
         """Update bounds based on user response"""
         if has_launched:
+            # Rocket HAS launched - search earlier frames (including current)
             self.right_bound = self.current_frame
         else:
-            self.left_bound = self.current_frame
+            # Rocket has NOT launched - search later frames (excluding current)
+            self.left_bound = self.current_frame + 1  # ← KEY FIX!
+    
+    def is_complete(self) -> bool:
+        """Check if bisection is complete"""
+        return self.is_finished
     
     def get_progress_info(self) -> Dict[str, Any]:
         """Get progress information for user"""
         remaining_steps = self.calculate_remaining_steps()
+        total_estimated_steps = self.steps_taken + remaining_steps
+        progress_percentage = int((self.steps_taken / total_estimated_steps) * 100) if total_estimated_steps > 0 else 100
+        
         return {
             'current_frame': self.current_frame,
             'total_frames': self.total_frames,
             'steps_taken': self.steps_taken,
             'remaining_steps': remaining_steps,
-            'progress_percentage': int((self.steps_taken / (self.steps_taken + remaining_steps)) * 100)
+            'progress_percentage': progress_percentage
         }
     
     def calculate_remaining_steps(self) -> int:
