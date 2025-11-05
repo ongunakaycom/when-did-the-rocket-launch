@@ -191,6 +191,7 @@ User Requests → Load Balancer → Bot Instances → Shared Session Store
 
 ## Screenshots
 ![alt text](image.png)
+![alt text](image-1.png)
 
 ## About Me
 
