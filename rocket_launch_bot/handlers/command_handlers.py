@@ -205,27 +205,20 @@ async def handle_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Create new user session
         session = session_manager.create_session(user_id, video_info.frames)
-        progress = session.get_progress_info()
-
-        # Send welcome message for new session
-        welcome_text = (
-            "🔄 *Session Restarted!*\n\n"
-            "🚀 *Rocket Launch Frame Detector*\n\n"
-            "I'll help you find the exact frame where the rocket launches!\n"
-            f"• Total frames: {video_info.frames:,}\n"
-            f"• Estimated steps: {progress['remaining_steps'] + progress['steps_taken']}\n"
-            f"• Current progress: {progress['progress_percentage']}%\n\n"
-            "I'll show you frames and you tell me if the rocket has launched yet."
-        )
-
-        await query.edit_message_text(
-            welcome_text,
-            parse_mode='Markdown'
-        )
         
-        # Show first frame of new session
+        # Instead of trying to edit the message text (which doesn't exist for photo messages),
+        # directly show the first frame which will handle both text and photo messages properly
         await show_current_frame(update, context, session)
         
     except Exception as e:
         logger.error(f"Error during restart for user {user_id}: {e}")
-        await query.edit_message_text("❌ Error restarting session. Please try /start")
+        # For error message, we need to handle both text and media messages
+        try:
+            await query.edit_message_text("❌ Error restarting session. Please try /start")
+        except Exception as edit_error:
+            # If editing the message fails (because it's a media message), send a new message
+            logger.error(f"Could not edit message, sending new one: {edit_error}")
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="❌ Error restarting session. Please try /start"
+            )
