@@ -189,8 +189,6 @@ User Requests → Load Balancer → Bot Instances → Shared Session Store
 - **Error Budgets**: SLO-based reliability management
 - **Capacity Planning**: Resource usage forecasting
 
-```
-
 ## About Me
 
 - 👀 I specialize in full-stack development with extensive experience in frontend and backend technologies.
