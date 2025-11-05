@@ -1,11 +1,5 @@
-#!/usr/bin/env python3
-"""
-Rocket Launch Frame Detection Bot
-Telegram bot that helps find the exact frame where a rocket launches
-"""
-
 import logging
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler
 from handlers.command_handlers import start_command, handle_frame_response, handle_restart
 from config import Config
 
@@ -16,7 +10,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 def main():
     """Start the bot"""
     # Validate configuration
@@ -24,7 +17,8 @@ def main():
         logger.error(f"Configuration error: {error}")
         return
     
-    # Create Application
+    # Create Application using the modern approach
+    from telegram.ext import Application
     application = Application.builder().token(Config.BOT_TOKEN).build()
     
     # Add handlers
@@ -35,7 +29,6 @@ def main():
     # Start the Bot
     logger.info("Bot is starting...")
     application.run_polling()
-
 
 if __name__ == "__main__":
     main()

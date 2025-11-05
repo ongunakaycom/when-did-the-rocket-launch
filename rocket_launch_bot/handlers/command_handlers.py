@@ -2,7 +2,7 @@ import logging
 import sys
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram.ext import ContextTypes
+from telegram.ext import CallbackContext
 from bot.framex_client import FrameXClient, FrameProcessor
 from bot.session_manager import SessionManager
 from config import Config
@@ -14,7 +14,7 @@ frame_client = FrameXClient()
 frame_processor = FrameProcessor()
 session_manager = SessionManager()
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(update: Update, context: CallbackContext):
     """Handle /start command"""
     user = update.effective_user
     logger.info(f"Start command from user {user.id}")
@@ -24,7 +24,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session_manager.end_session(user.id)
         
         # Get video info
-        video_info = await frame_client.get_video_info(Config.VIDEO_NAME)
+        video_info = frame_client.get_video_info(Config.VIDEO_NAME)
 
         # Create user session
         session = session_manager.create_session(user.id, video_info.frames)
@@ -65,14 +65,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif update.callback_query:
             await update.callback_query.edit_message_text(error_msg)
 
-async def show_current_frame(update: Update, context: ContextTypes.DEFAULT_TYPE, session):
+async def show_current_frame(update: Update, context: CallbackContext, session):
     """Show current frame to user"""
     try:
         progress = session.get_progress_info()
 
         # Get frame image
-        frame_data = await frame_client.get_frame_image(Config.VIDEO_NAME, session.current_frame)
-        processed_image = await frame_processor.prepare_frame_for_telegram(frame_data)
+        frame_data = frame_client.get_frame_image(Config.VIDEO_NAME, session.current_frame)
+        processed_image = frame_processor.prepare_frame_for_telegram(frame_data)
 
         # Create caption
         caption = (
@@ -117,8 +117,7 @@ async def show_current_frame(update: Update, context: ContextTypes.DEFAULT_TYPE,
         else:
             await update.message.reply_text(error_msg)
 
-
-async def handle_frame_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_frame_response(update: Update, context: CallbackContext):
     """Handle user response to frame question"""
     query = update.callback_query
     await query.answer()
@@ -154,13 +153,12 @@ async def handle_frame_response(update: Update, context: ContextTypes.DEFAULT_TY
         logger.error(f"Error handling frame response: {e}")
         await query.edit_message_text("❌ Sorry, I encountered an error. Please try again with /start")
 
-
-async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE, session):
+async def show_results(update: Update, context: CallbackContext, session):
     """Show final results"""
     try:
         # Get the launch frame image
-        frame_data = await frame_client.get_frame_image(Config.VIDEO_NAME, session.found_frame)
-        processed_image = await frame_processor.prepare_frame_for_telegram(frame_data)
+        frame_data = frame_client.get_frame_image(Config.VIDEO_NAME, session.found_frame)
+        processed_image = frame_processor.prepare_frame_for_telegram(frame_data)
 
         result_text = (
             "🎉 *Analysis Complete!*\n\n"
@@ -187,8 +185,7 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE, sessi
             "Sorry, I couldn't load the final frame image."
         )
 
-
-async def handle_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_restart(update: Update, context: CallbackContext):
     """Handle restart request"""
     query = update.callback_query
     await query.answer()
@@ -201,7 +198,7 @@ async def handle_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Session restarted for user {user_id}")
         
         # Get video info for new session
-        video_info = await frame_client.get_video_info(Config.VIDEO_NAME)
+        video_info = frame_client.get_video_info(Config.VIDEO_NAME)
         
         # Create new user session
         session = session_manager.create_session(user_id, video_info.frames)
