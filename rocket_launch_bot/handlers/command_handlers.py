@@ -1,6 +1,10 @@
 import logging
+import sys
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot.framex_client import FrameXClient, FrameProcessor
 from bot.session_manager import SessionManager
@@ -13,13 +17,15 @@ frame_client = FrameXClient()
 frame_processor = FrameProcessor()
 session_manager = SessionManager()
 
-
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     user = update.effective_user
     logger.info(f"Start command from user {user.id}")
 
     try:
+        # Clean up any existing session first
+        session_manager.end_session(user.id)
+        
         # Get video info
         video_info = await frame_client.get_video_info(Config.VIDEO_NAME)
 
@@ -37,20 +43,30 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "I'll show you frames and you tell me if the rocket has launched yet."
         )
 
-        await update.message.reply_text(
-            welcome_text,
-            parse_mode='Markdown'
-        )
-
-        # Show first frame
-        await show_current_frame(update, context, session)
+        # Handle both message and callback_query scenarios
+        if update.message:
+            await update.message.reply_text(
+                welcome_text,
+                parse_mode='Markdown'
+            )
+            # Show first frame
+            await show_current_frame(update, context, session)
+        elif update.callback_query:
+            # For callback queries, we need to edit the existing message
+            await update.callback_query.edit_message_text(
+                welcome_text,
+                parse_mode='Markdown'
+            )
+            # Show first frame after a brief delay
+            await show_current_frame(update, context, session)
 
     except Exception as e:
         logger.error(f"Error in start command: {e}", exc_info=True)
-        await update.message.reply_text(
-            f"❌ Sorry, I encountered an error: {str(e)}"
-        )
-
+        error_msg = f"❌ Sorry, I encountered an error: {str(e)}"
+        if update.message:
+            await update.message.reply_text(error_msg)
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(error_msg)
 
 async def show_current_frame(update: Update, context: ContextTypes.DEFAULT_TYPE, session):
     """Show current frame to user"""
@@ -93,8 +109,12 @@ async def show_current_frame(update: Update, context: ContextTypes.DEFAULT_TYPE,
             )
 
     except Exception as e:
-        logger.error(f"Error showing frame: {e}")
-        error_msg = "❌ Sorry, I couldn't load the frame. Please try again."
+        logger.error(f"Error showing frame {session.current_frame if session else 'unknown'}: {e}")
+        error_msg = (
+            "❌ Sorry, I couldn't load the frame. "
+            "This might be due to network issues or the frame being unavailable.\n\n"
+            "Please try again with /start"
+        )
         if update.callback_query:
             await update.callback_query.edit_message_text(error_msg)
         else:
@@ -108,6 +128,12 @@ async def handle_frame_response(update: Update, context: ContextTypes.DEFAULT_TY
 
     user_id = query.from_user.id
     response = query.data
+
+    # Validate response
+    if response not in ['yes', 'no']:
+        logger.warning(f"Invalid response received: {response}")
+        await query.edit_message_text("❌ Invalid response. Please use the buttons provided.")
+        return
 
     session = session_manager.get_session(user_id)
     if not session:
@@ -170,8 +196,19 @@ async def handle_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    # End current session
-    session_manager.end_session(query.from_user.id)
-
-    # Start new session
-    await start_command(update, context)
+    user_id = query.from_user.id
+    
+    try:
+        # End current session
+        session_manager.end_session(user_id)
+        logger.info(f"Session restarted for user {user_id}")
+        
+        # Send restarting message
+        await query.edit_message_text("🔄 Restarting session...")
+        
+        # Start new session
+        await start_command(update, context)
+        
+    except Exception as e:
+        logger.error(f"Error during restart for user {user_id}: {e}")
+        await query.edit_message_text("❌ Error restarting session. Please try /start")

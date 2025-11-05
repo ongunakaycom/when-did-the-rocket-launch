@@ -6,12 +6,7 @@ Telegram bot that helps find the exact frame where a rocket launches
 
 import logging
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
-
-from handlers.command_handlers import (
-    start_command, 
-    handle_frame_response, 
-    handle_restart
-)
+from handlers.command_handlers import start_command, handle_frame_response, handle_restart
 from config import Config
 
 # Configure logging
