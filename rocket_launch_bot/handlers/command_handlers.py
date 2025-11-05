@@ -3,9 +3,6 @@ import sys
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from bot.framex_client import FrameXClient, FrameProcessor
 from bot.session_manager import SessionManager
 from config import Config
@@ -203,11 +200,31 @@ async def handle_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session_manager.end_session(user_id)
         logger.info(f"Session restarted for user {user_id}")
         
-        # Send restarting message
-        await query.edit_message_text("🔄 Restarting session...")
+        # Get video info for new session
+        video_info = await frame_client.get_video_info(Config.VIDEO_NAME)
         
-        # Start new session
-        await start_command(update, context)
+        # Create new user session
+        session = session_manager.create_session(user_id, video_info.frames)
+        progress = session.get_progress_info()
+
+        # Send welcome message for new session
+        welcome_text = (
+            "🔄 *Session Restarted!*\n\n"
+            "🚀 *Rocket Launch Frame Detector*\n\n"
+            "I'll help you find the exact frame where the rocket launches!\n"
+            f"• Total frames: {video_info.frames:,}\n"
+            f"• Estimated steps: {progress['remaining_steps'] + progress['steps_taken']}\n"
+            f"• Current progress: {progress['progress_percentage']}%\n\n"
+            "I'll show you frames and you tell me if the rocket has launched yet."
+        )
+
+        await query.edit_message_text(
+            welcome_text,
+            parse_mode='Markdown'
+        )
+        
+        # Show first frame of new session
+        await show_current_frame(update, context, session)
         
     except Exception as e:
         logger.error(f"Error during restart for user {user_id}: {e}")
