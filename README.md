@@ -188,3 +188,12 @@ User Requests → Load Balancer → Bot Instances → Shared Session Store
 - **Performance Metrics**: Business and technical metrics
 - **Error Budgets**: SLO-based reliability management
 - **Capacity Planning**: Resource usage forecasting
+
+```
+
+## About Me
+
+- 👀 I specialize in full-stack development with extensive experience in frontend and backend technologies.
+- 🌱 Currently, I'm sharpening my skills in advanced concepts of web development.
+- 💞️ I’m always open to exciting collaborations and projects that challenge my abilities.
+- 📫 You can reach me at [info@ongunakay.com](mailto:info@ongunakay.com).
