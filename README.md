@@ -1,4 +1,4 @@
-# 🚀 Rocket Launch Bot - HR Interview Test Solution
+# 🚀 Rocket Launch Bot
 
 ## 📋 Project Overview
 
