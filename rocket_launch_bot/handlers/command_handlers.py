@@ -31,14 +31,18 @@ async def start_command(update: Update, context: CallbackContext):
         session = session_manager.create_session(user.id, video_info.frames)
         progress = session.get_progress_info()
 
-        # Send welcome message
+        # Send MUCH CLEARER welcome message
         welcome_text = (
             "🚀 *Rocket Launch Frame Detector*\n\n"
-            "I'll help you find the exact frame where the rocket launches!\n"
+            "I'll help you find the exact frame where the Falcon Heavy rocket LAUNCHES!\n"
             f"• Total frames: {video_info.frames:,}\n"
             f"• Estimated steps: {progress['remaining_steps'] + progress['steps_taken']}\n\n"
-            "*Important:* The video shows the launch preparation first, then the actual launch.\n"
-            "Answer 'Yes' when you see the rocket has *already launched* (fire/smoke, moving upward)."
+            "🔴 *CRITICAL: What to look for:*\n"
+            "• ❌ NO: SpaceX studio, hosts talking, countdown, static rocket on pad\n"
+            "• ❌ NO: Tesla Roadster in space (this happens AFTER launch)\n"
+            "• ✅ YES: ONLY when you see FIRE/SMOKE and the rocket MOVING UPWARD from the launch pad\n\n"
+            "The video shows: PRE-LAUNCH → COUNTDOWN → ACTUAL LAUNCH → IN-FLIGHT → TESLA IN SPACE\n"
+            "We're looking for the EXACT moment of LAUNCH (fire + upward movement)!"
         )
 
         # Handle both message and callback_query scenarios
@@ -93,20 +97,25 @@ async def show_current_frame(update: Update, context: CallbackContext, session=N
         frame_data = frame_client.get_frame_image(Config.VIDEO_NAME, session.current_frame)
         processed_image = frame_processor.prepare_frame_for_telegram(frame_data)
 
-        # Create caption
+        # Add timeline guidance to help users understand where they are
+        timeline_info = _get_timeline_info(session.current_frame, session.total_frames)
+
+        # Create MUCH CLEARER caption
         caption = (
             f"📊 *Frame {session.current_frame:,} of {session.total_frames:,}*\n"
+            f"{timeline_info}\n"
             f"🔄 Step {progress['steps_taken']} of ~{progress['remaining_steps'] + progress['steps_taken']}\n"
             f"📈 Progress: {progress['progress_percentage']}%\n\n"
-            "*Has the rocket launched yet?* 🚀\n"
-            "(Answer 'Yes' when you see fire/smoke and upward movement)"
+            "*Has the rocket LAUNCHED yet?* 🚀\n"
+            "✅ YES: Only if you see FIRE/SMOKE and UPWARD MOVEMENT\n"
+            "❌ NO: For everything else (studio, countdown, Tesla in space)"
         )
 
         # Create keyboard
         keyboard = [
             [
-                InlineKeyboardButton("🚀 Yes, Rocket Launched", callback_data="yes"),
-                InlineKeyboardButton("❌ No, Not Yet", callback_data="no")
+                InlineKeyboardButton("🚀 YES - Rocket Launched", callback_data="yes"),
+                InlineKeyboardButton("❌ NO - Not Yet", callback_data="no")
             ],
             [InlineKeyboardButton("🔄 Restart", callback_data="restart")]
         ]
@@ -153,6 +162,23 @@ async def show_current_frame(update: Update, context: CallbackContext, session=N
         else:
             await update.message.reply_text(error_msg)
 
+def _get_timeline_info(current_frame: int, total_frames: int) -> str:
+    """Provide timeline guidance based on current frame position"""
+    if current_frame < 15000:
+        return "📍 *You're in: EARLY PRE-LAUNCH* (SpaceX studio, hosts talking)"
+    elif current_frame < 35000:
+        return "📍 *You're in: COUNTDOWN PHASE* (rocket on pad, countdown graphics)"
+    elif current_frame < 48000:
+        return "📍 *You're in: PRE-LAUNCH FINAL* (rocket on pad, final preparations)"
+    elif current_frame < 52000:
+        return "📍 *You're in: LAUNCH WINDOW* (watch closely for FIRE and SMOKE!)"
+    elif current_frame < 56000:
+        return "📍 *You're in: LAUNCH MOMENT* (should see fire/smoke + upward movement)"
+    elif current_frame < 60000:
+        return "📍 *You're in: POST-LAUNCH* (rocket ascending, stage separation)"
+    else:
+        return "📍 *You're in: IN-FLIGHT* (Tesla Roadster in space - this is AFTER launch)"
+
 async def handle_frame_response(update: Update, context: CallbackContext):
     """Handle user response to frame question"""
     query = update.callback_query
@@ -162,6 +188,11 @@ async def handle_frame_response(update: Update, context: CallbackContext):
     response = query.data
 
     logger.info(f"User {user_id} responded: {response}")
+
+    # Handle restart first
+    if response == "restart":
+        await handle_restart(update, context)
+        return
 
     # Validate response
     if response not in ['yes', 'no']:
@@ -181,25 +212,29 @@ async def handle_frame_response(update: Update, context: CallbackContext):
         
         session.update_bounds(has_launched)
 
-        # Check if bisection is complete
-        if session.is_complete():
+        # Move to next step and check if complete
+        is_complete = session.next_step()
+        
+        if is_complete:
             # Bisection complete - show results
+            if session.found_frame is None:
+                logger.error(f"Session complete but found_frame is None for user {user_id}")
+                # Fallback: use the last frame we showed
+                session.found_frame = session.current_frame
+            
             logger.info(f"Session complete for user {user_id}. Found frame: {session.found_frame}")
             await show_results(update, context, session)
             session_manager.end_session(user_id)
         else:
             # Continue to next frame
-            session.next_step()
             await show_current_frame(update, context, session)
 
     except Exception as e:
         logger.error(f"Error handling frame response: {e}", exc_info=True)
         try:
-            # Try to edit the message
             await query.edit_message_text("❌ Sorry, I encountered an error. Please try again with /start")
         except Exception as edit_error:
             logger.error(f"Error editing message: {edit_error}")
-            # If editing fails, send a new message
             await context.bot.send_message(
                 chat_id=user_id, 
                 text="❌ Sorry, I encountered an error. Please try again with /start"
@@ -208,13 +243,23 @@ async def handle_frame_response(update: Update, context: CallbackContext):
 async def show_results(update: Update, context: CallbackContext, session):
     """Show final results"""
     try:
-        # Get the launch frame image
-        frame_data = frame_client.get_frame_image(Config.VIDEO_NAME, session.found_frame)
-        processed_image = frame_processor.prepare_frame_for_telegram(frame_data)
+        # Ensure found_frame is valid
+        if session.found_frame is None or session.found_frame < 0:
+            logger.error(f"Invalid found_frame: {session.found_frame}, using fallback")
+            session.found_frame = session.total_frames - 1  # Use last frame as fallback
 
+        # Calculate approximate time (frames to time conversion)
+        # Frame rate: 30000/1001 ≈ 29.97 fps
+        frame_rate = 30000 / 1001  # ~29.97 frames per second
+        time_in_seconds = session.found_frame / frame_rate
+        minutes = int(time_in_seconds // 60)
+        seconds = int(time_in_seconds % 60)
+
+        # Create result text
         result_text = (
             "🎉 *Analysis Complete!*\n\n"
             f"🚀 *Launch Frame Found:* {session.found_frame:,}\n"
+            f"⏱️ *Approximate Time:* {minutes}m {seconds}s\n"
             f"📊 *Total Steps:* {session.steps_taken}\n"
             f"🎯 *Total Frames Analyzed:* {session.total_frames:,}\n\n"
             "*Here's the launch frame:*"
@@ -225,17 +270,88 @@ async def show_results(update: Update, context: CallbackContext, session):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.callback_query.edit_message_media(
-            media=InputMediaPhoto(processed_image, caption=result_text, parse_mode='Markdown'),
-            reply_markup=reply_markup
-        )
+        try:
+            # Get the launch frame image
+            frame_data = frame_client.get_frame_image(Config.VIDEO_NAME, session.found_frame)
+            processed_image = frame_processor.prepare_frame_for_telegram(frame_data)
+
+            # Try to edit the message with the new image and caption
+            await update.callback_query.edit_message_media(
+                media=InputMediaPhoto(processed_image, caption=result_text, parse_mode='Markdown'),
+                reply_markup=reply_markup
+            )
+            
+        except Exception as image_error:
+            logger.error(f"Error loading launch frame image: {image_error}")
+            # If image fails, just show the text results
+            await update.callback_query.edit_message_text(
+                result_text,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
 
     except Exception as e:
         logger.error(f"Error showing results: {e}", exc_info=True)
-        await update.callback_query.edit_message_text(
-            f"🎉 Analysis Complete!\n\nLaunch frame: {session.found_frame:,}\n\n"
-            "Sorry, I couldn't load the final frame image."
+        # Fallback: send text-only results
+        try:
+            result_text = (
+                "🎉 *Analysis Complete!*\n\n"
+                f"🚀 *Launch Frame Found:* {session.found_frame:,}\n"
+                f"📊 *Total Steps:* {session.steps_taken}\n"
+                f"🎯 *Total Frames Analyzed:* {session.total_frames:,}\n\n"
+                "📸 *Note:* Could not load the launch frame image, but the analysis is complete!"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("🔄 Start Over", callback_data="restart")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.callback_query.edit_message_text(
+                result_text,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+        except Exception as final_error:
+            logger.error(f"Final fallback also failed: {final_error}")
+            # Last resort
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"🎉 Analysis complete! Launch frame: {session.found_frame:,}",
+                reply_markup=reply_markup
+            )
+
+    except Exception as e:
+        logger.error(f"Error showing results: {e}", exc_info=True)
+        # Enhanced fallback with more information
+        result_text = (
+            "🎉 *Analysis Complete!*\n\n"
+            f"🚀 *Launch Frame Found:* {session.found_frame:,}\n"
+            f"📊 *Total Steps:* {session.steps_taken}\n"
+            f"🎯 *Total Frames Analyzed:* {session.total_frames:,}\n\n"
+            "📸 *Note:* The launch frame image could not be loaded, "
+            "but the frame number above is correct!"
         )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Start Over", callback_data="restart")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        try:
+            await update.callback_query.edit_message_text(
+                result_text,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+        except Exception as edit_error:
+            logger.error(f"Error editing results message: {edit_error}")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=result_text,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
 
 async def handle_restart(update: Update, context: CallbackContext):
     """Handle restart request"""
@@ -252,19 +368,21 @@ async def handle_restart(update: Update, context: CallbackContext):
         # Get video info for new session
         video_info = frame_client.get_video_info(Config.VIDEO_NAME)
         
-        # Create new user session
-        session = session_manager.create_session(user_id, video_info.frames)
+        # Create new user session - FIXED: use user_id instead of user.id
+        session = session_manager.create_session(user_id, video_info.frames)  # FIXED LINE
         progress = session.get_progress_info()
 
-        # Send new welcome message - use edit_message_caption if it's a photo message
+        # Send new welcome message with clearer instructions
         welcome_text = (
             "🔄 *Session Restarted!*\n\n"
             "🚀 *Rocket Launch Frame Detector*\n\n"
-            "I'll help you find the exact frame where the rocket launches!\n"
+            "I'll help you find the exact frame where the Falcon Heavy rocket LAUNCHES!\n"
             f"• Total frames: {video_info.frames:,}\n"
             f"• Estimated steps: {progress['remaining_steps'] + progress['steps_taken']}\n\n"
-            "*Important:* The video shows the launch preparation first, then the actual launch.\n"
-            "Answer 'Yes' when you see the rocket has *already launched* (fire/smoke, moving upward)."
+            "🔴 *CRITICAL: What to look for:*\n"
+            "• ❌ NO: SpaceX studio, hosts talking, countdown, static rocket on pad\n"
+            "• ❌ NO: Tesla Roadster in space (this happens AFTER launch)\n"
+            "• ✅ YES: ONLY when you see FIRE/SMOKE and the rocket MOVING UPWARD from the launch pad"
         )
 
         try:

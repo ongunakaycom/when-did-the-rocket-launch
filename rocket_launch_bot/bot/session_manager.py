@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -12,29 +13,66 @@ class UserSession:
         self.total_frames = total_frames
         self.left_bound = 0
         self.right_bound = total_frames - 1
-        self.steps_taken = 1  # ← Count this as first step
+        self.steps_taken = 0
         self.found_frame: Optional[int] = None
         self.is_finished = False
+        self.current_frame = 0
+        self._calculate_next_frame()  # Calculate first frame immediately
     
-    def next_step(self) -> bool:
-        """Calculate next frame to show, returns True if bisection is complete"""
-        if self.left_bound >= self.right_bound:  # Simplified condition
-            self.found_frame = self.right_bound
-            self.is_finished = True
+    def _calculate_next_frame(self):
+        """Calculate the next frame to show using binary search"""
+        if self.left_bound <= self.right_bound:
+            self.current_frame = (self.left_bound + self.right_bound) // 2
+            self.steps_taken += 1
+            logger.info(f"Calculated frame {self.current_frame} (bounds: {self.left_bound}-{self.right_bound})")
             return True
-        
-        self.current_frame = (self.left_bound + self.right_bound) // 2
-        self.steps_taken += 1
         return False
     
     def update_bounds(self, has_launched: bool):
         """Update bounds based on user response"""
+        logger.info(f"Updating bounds: launched={has_launched}, current_frame={self.current_frame}")
+        logger.info(f"Before update - left: {self.left_bound}, right: {self.right_bound}")
+        
         if has_launched:
-            # Rocket HAS launched - search earlier frames (including current)
-            self.right_bound = self.current_frame
+            # Rocket HAS launched - the launch happened at or BEFORE this frame
+            # So we need to search in the left half (including current frame)
+            self.right_bound = self.current_frame - 1  # Search LEFT of current frame
+            logger.info(f"Rocket launched - moving right bound to {self.current_frame - 1}")
         else:
-            # Rocket has NOT launched - search later frames (excluding current)
-            self.left_bound = self.current_frame + 1  # ← KEY FIX!
+            # Rocket has NOT launched - the launch happened AFTER this frame
+            # So we need to search in the right half (excluding current frame)
+            self.left_bound = self.current_frame + 1  # Search RIGHT of current frame
+            logger.info(f"Rocket not launched - moving left bound to {self.current_frame + 1}")
+        
+        logger.info(f"After update - left: {self.left_bound}, right: {self.right_bound}")
+    
+    def next_step(self) -> bool:
+        """Move to next step, return True if complete"""
+        # Check if search is complete (binary search termination condition)
+        if self.left_bound > self.right_bound:
+            # Search complete - determine the found frame
+            self.is_finished = True
+            
+            # The launch frame is the first frame where rocket launched
+            # Since we're searching for the transition from "no" to "yes",
+            # the launch frame should be the left_bound
+            if self.left_bound < self.total_frames:
+                self.found_frame = self.left_bound
+            else:
+                self.found_frame = self.total_frames - 1  # Last frame as fallback
+            
+            logger.info(f"Search complete. Found frame: {self.found_frame}")
+            return True
+        
+        # Continue with next frame
+        has_next = self._calculate_next_frame()
+        if not has_next:
+            self.is_finished = True
+            self.found_frame = self.current_frame
+            logger.info(f"No next frame available. Using current: {self.found_frame}")
+            return True
+        
+        return False
     
     def is_complete(self) -> bool:
         """Check if bisection is complete"""
@@ -44,7 +82,12 @@ class UserSession:
         """Get progress information for user"""
         remaining_steps = self.calculate_remaining_steps()
         total_estimated_steps = self.steps_taken + remaining_steps
-        progress_percentage = int((self.steps_taken / total_estimated_steps) * 100) if total_estimated_steps > 0 else 100
+        
+        # Calculate progress percentage more accurately
+        if total_estimated_steps > 0:
+            progress_percentage = min(100, int((self.steps_taken / total_estimated_steps) * 100))
+        else:
+            progress_percentage = 100
         
         return {
             'current_frame': self.current_frame,
@@ -55,14 +98,13 @@ class UserSession:
         }
     
     def calculate_remaining_steps(self) -> int:
-        """Calculate estimated remaining steps"""
-        left, right = self.left_bound, self.right_bound
-        steps = 0
-        while left + 1 < right:
-            steps += 1
-            mid = (left + right) // 2
-            left = mid  # Conservative estimate
-        return steps
+        """Calculate estimated remaining steps using binary search complexity"""
+        remaining_range = self.right_bound - self.left_bound
+        if remaining_range <= 0:
+            return 0
+        
+        # Binary search takes log2(n) steps, so estimate remaining
+        return max(0, int(math.log2(remaining_range + 1)))
 
 
 class SessionManager:
@@ -74,7 +116,6 @@ class SessionManager:
     def create_session(self, user_id: int, total_frames: int) -> UserSession:
         """Create a new session for user"""
         session = UserSession(user_id, total_frames)
-        session.next_step()  # Calculate first frame
         self.sessions[user_id] = session
         logger.info(f"Created session for user {user_id}, total frames: {total_frames}")
         return session
