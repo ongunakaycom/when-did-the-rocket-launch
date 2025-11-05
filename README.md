@@ -1,5 +1,31 @@
 # 🚀 Rocket Launch Bot
 
+Rocket Launch Bot is an interactive Telegram application designed to determine the exact frame when a rocket launches in a video sequence. Built as part of the Madrid Recruitment Test, the bot demonstrates maintainable software design, efficient algorithms, and modern architectural principles.
+
+Using the FrameX API as a data source, the bot displays successive video frames to the user, asking whether the rocket has launched. Behind the scenes, it applies a bisection (binary search) algorithm to locate the precise frame where the launch occurs — reducing 61,696 frames to just about 16 user interactions.
+
+The project is implemented following Hexagonal Architecture and Domain-Driven Design (DDD) principles, ensuring clear separation of concerns, scalability, and resilience. Built with the BERNARD framework, it leverages CQRS (Command Query Responsibility Segregation) for state management and event-driven workflows for responsive user interaction.
+
+## ✨ Key Highlights
+
+Efficient Search: Binary search drastically reduces computation and user effort.
+
+Maintainable Design: Separation of concerns and modular architecture for easy evolution.
+
+Resilient System: Circuit breakers, retries, and graceful degradation for reliability.
+
+Observable and Scalable: Comprehensive monitoring, logging, and stateless horizontal scaling.
+
+## 🎯 Objective
+
+To create a Telegram bot capable of determining “When did the rocket launch?” — showcasing the ability to:
+
+Write maintainable, production-grade code
+
+Apply advanced architectural and algorithmic patterns
+
+Deliver an engaging and reliable user experience
+
 ## 🏗️ **SYSTEM ARCHITECTURE PHILOSOPHY**
 
 ### **Architectural Principles**
