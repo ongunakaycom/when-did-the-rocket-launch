@@ -190,8 +190,8 @@ User Requests → Load Balancer → Bot Instances → Shared Session Store
 - **Capacity Planning**: Resource usage forecasting
 
 ## Screenshots
-![alt text](image.png)
-![alt text](image-1.png)
+![alt text](/images/image.pngimage.png)
+![alt text](/images/image-1.png)
 
 ## About Me
 
